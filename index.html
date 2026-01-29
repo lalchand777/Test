@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Universal AI Chat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Marked.js for Markdown -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+
+<body class="bg-gray-100 text-gray-900 h-screen overflow-hidden">
+
+<!-- Fallback Loading -->
+<div id="loading" class="flex items-center justify-center h-screen text-gray-500">
+  Loading App...
+</div>
+
+<!-- App -->
+<div id="app" class="hidden h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="w-72 bg-white border-r flex flex-col">
+    <div class="p-4 border-b flex justify-between items-center">
+      <h2 class="font-semibold">Chat History</h2>
+      <button id="newChatBtn" class="text-sm text-blue-600 hover:underline">New</button>
+    </div>
+    <div id="chatList" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+    <button id="settingsBtn" class="m-3 text-sm text-gray-600 hover:text-black">
+      ⚙ Settings
+    </button>
+  </aside>
+
+  <!-- Main Chat -->
+  <main class="flex-1 flex flex-col bg-gray-50">
+    <div id="chatWindow" class="flex-1 overflow-y-auto p-6 space-y-4"></div>
+
+    <!-- Input -->
+    <div class="p-4 bg-white border-t">
+      <div class="flex items-center bg-gray-100 rounded-full px-4">
+        <input
+          id="userInput"
+          type="text"
+          placeholder="Ask anything..."
+          class="flex-1 bg-transparent py-3 outline-none"
+        />
+        <button id="sendBtn" class="text-blue-600 font-semibold">Send</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Settings Modal -->
+<div id="settingsModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center">
+  <div class="bg-white w-96 rounded-lg p-6 space-y-4">
+    <h3 class="text-lg font-semibold">Settings</h3>
+
+    <div>
+      <label class="text-sm">OpenRouter API Key</label>
+      <input id="apiKeyInput" type="password" class="w-full border rounded px-3 py-2 mt-1">
+    </div>
+
+    <div>
+      <label class="text-sm">Model Name</label>
+      <input id="modelInput" type="text" class="w-full border rounded px-3 py-2 mt-1">
+    </div>
+
+    <div class="flex justify-end gap-2 pt-2">
+      <button id="closeSettings" class="px-4 py-2 text-gray-600">Cancel</button>
+      <button id="saveSettings" class="px-4 py-2 bg-blue-600 text-white rounded">
+        Save
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- SCRIPT AT END (CRITICAL) -->
+<script>
+/* ======================
+   State & Storage
+====================== */
+let chats = JSON.parse(localStorage.getItem("chats") || "[]");
+let currentChatId = null;
+
+const apiKeyStorage = localStorage.getItem("openrouter_api_key") || "";
+const modelStorage = localStorage.getItem("openrouter_model") || "deepseek/deepseek-r1:free";
+
+/* ======================
+   Elements
+====================== */
+const loading = document.getElementById("loading");
+const app = document.getElementById("app");
+const chatList = document.getElementById("chatList");
+const chatWindow = document.getElementById("chatWindow");
+const userInput = document.getElementById("userInput");
+
+const settingsModal = document.getElementById("settingsModal");
+const apiKeyInput = document.getElementById("apiKeyInput");
+const modelInput = document.getElementById("modelInput");
+
+/* ======================
+   Init
+====================== */
+function init() {
+  apiKeyInput.value = apiKeyStorage;
+  modelInput.value = modelStorage;
+
+  if (!chats.length) createNewChat();
+  renderChatList();
+  openChat(chats[0].id);
+
+  loading.classList.add("hidden");
+  app.classList.remove("hidden");
+}
+
+window.onload = init;
+
+/* ======================
+   Chat Functions
+====================== */
+function createNewChat() {
+  const id = Date.now();
+  chats.unshift({ id, title: "New Chat", messages: [] });
+  localStorage.setItem("chats", JSON.stringify(chats));
+}
+
+function openChat(id) {
+  currentChatId = id;
+  renderMessages();
+}
+
+function renderChatList() {
+  chatList.innerHTML = "";
+  chats.forEach(chat => {
+    const div = document.createElement("div");
+    div.className = "p-2 rounded cursor-pointer hover:bg-gray-100 text-sm";
+    div.textContent = chat.title;
+    div.onclick = () => openChat(chat.id);
+    chatList.appendChild(div);
+  });
+}
+
+function renderMessages() {
+  chatWindow.innerHTML = "";
+  const chat = chats.find(c => c.id === currentChatId);
+  if (!chat) return;
+
+  chat.messages.forEach(msg => {
+    const bubble = document.createElement("div");
+    bubble.className = msg.role === "user"
+      ? "ml-auto bg-blue-600 text-white p-3 rounded-xl max-w-xl"
+      : "mr-auto bg-white p-3 rounded-xl max-w-xl border";
+
+    bubble.innerHTML = msg.role === "assistant"
+      ? marked.parse(msg.content)
+      : msg.content;
+
+    chatWindow.appendChild(bubble);
+  });
+
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+
+/* ======================
+   Send Message
+====================== */
+async function sendMessage() {
+  const text = userInput.value.trim();
+  if (!text) return;
+
+  userInput.value = "";
+  const chat = chats.find(c => c.id === currentChatId);
+
+  chat.messages.push({ role: "user", content: text });
+  chat.title = chat.title === "New Chat" ? text.slice(0, 30) : chat.title;
+  renderChatList();
+  renderMessages();
+
+  const responseBubble = document.createElement("div");
+  responseBubble.className = "mr-auto bg-white p-3 rounded-xl max-w-xl border";
+  responseBubble.textContent = "Thinking...";
+  chatWindow.appendChild(responseBubble);
+
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + apiKeyInput.value
+      },
+      body: JSON.stringify({
+        model: modelInput.value,
+        messages: chat.messages
+      })
+    });
+
+    const data = await res.json();
+    const aiText = data.choices[0].message.content;
+
+    chat.messages.push({ role: "assistant", content: aiText });
+    localStorage.setItem("chats", JSON.stringify(chats));
+
+    responseBubble.innerHTML = marked.parse(aiText);
+  } catch (e) {
+    responseBubble.textContent = "Error fetching response.";
+  }
+
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+
+/* ======================
+   Events
+====================== */
+document.getElementById("sendBtn").onclick = sendMessage;
+userInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") sendMessage();
+});
+
+document.getElementById("newChatBtn").onclick = () => {
+  createNewChat();
+  renderChatList();
+  openChat(chats[0].id);
+};
+
+document.getElementById("settingsBtn").onclick = () => {
+  settingsModal.classList.remove("hidden");
+};
+
+document.getElementById("closeSettings").onclick = () => {
+  settingsModal.classList.add("hidden");
+};
+
+document.getElementById("saveSettings").onclick = () => {
+  localStorage.setItem("openrouter_api_key", apiKeyInput.value);
+  localStorage.setItem("openrouter_model", modelInput.value);
+  settingsModal.classList.add("hidden");
+};
+</script>
+
+</body>
+</html>
